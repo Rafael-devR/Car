@@ -100,7 +100,7 @@ private:
     std::vector<Ped> peds_;
     std::vector<Bullet> bullets_;
 
-    float cameraSize_ = 39.0f;
+    float cameraSize_ = 32.0f;
     bool ePrev_ = false;
     bool firePrev_ = false;
     std::uint32_t rng_ = 0x51A7C0DEu;
