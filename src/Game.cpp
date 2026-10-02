@@ -20,6 +20,54 @@ RenderItem Cube(float x,float y,float z,float sx,float sy,float sz,std::uint32_t
     return d;
 }
 
+RenderItem Part(MeshKind mesh,float x,float y,float z,float sx,float sy,float sz,
+                float yaw,float pitch,float roll,std::uint32_t tex,
+                XMFLOAT4 tint={1,1,1,1},bool shadow=true,bool unlit=false) {
+    RenderItem d;
+    d.mesh=mesh;
+    d.pos={x,y,z};
+    d.scale={sx,sy,sz};
+    d.yaw=yaw;
+    d.pitch=pitch;
+    d.roll=roll;
+    d.texture=tex;
+    d.tint=tint;
+    d.castsShadow=shadow;
+    d.unlit=unlit;
+    return d;
+}
+
+XMFLOAT3 LocalPoint(float x,float y,float z,float yaw,float lx,float ly,float lz) {
+    float s=std::sin(yaw), cs=std::cos(yaw);
+    return {x + lx*cs + lz*s, y + ly, z - lx*s + lz*cs};
+}
+
+XMFLOAT4 CarPaint(std::uint32_t variant,bool bright=false) {
+    XMFLOAT4 c{0.66f,0.12f,0.10f,1};
+    switch(variant) {
+        case 11: c={0.10f,0.28f,0.68f,1}; break;
+        case 12: c={0.92f,0.60f,0.08f,1}; break;
+        case 13: c={0.78f,0.82f,0.88f,1}; break;
+        case 21: c={0.08f,0.48f,0.40f,1}; break;
+        case 22: c={0.40f,0.18f,0.62f,1}; break;
+        case 23: c={0.78f,0.28f,0.07f,1}; break;
+        default: break;
+    }
+    if(bright) {
+        c.x=std::min(1.0f,c.x*1.18f);
+        c.y=std::min(1.0f,c.y*1.18f);
+        c.z=std::min(1.0f,c.z*1.18f);
+    }
+    return c;
+}
+
+XMFLOAT4 ShirtColor(std::uint32_t variant,bool player) {
+    if(player) return {0.12f,0.34f,0.78f,1};
+    if(variant==9) return {0.05f,0.16f,0.38f,1};
+    if(variant==8) return {0.10f,0.55f,0.28f,1};
+    return {0.83f,0.50f,0.08f,1};
+}
+
 RenderItem GroundQuad(float x,float y,float z,float sx,float sz,float yaw,std::uint32_t tex,
                       XMFLOAT4 tint={1,1,1,1},bool shadow=false,bool unlit=false) {
     RenderItem d;
@@ -68,7 +116,7 @@ void Game::Init(HWND hwnd) {
 }
 
 void Game::OnMouseWheel(short delta) {
-    cameraSize_=std::clamp(cameraSize_-float(delta)/120.0f*2.0f,24.0f,44.0f);
+    cameraSize_=std::clamp(cameraSize_-float(delta)/120.0f*2.0f,28.0f,52.0f);
 }
 
 bool Game::Key(int vk) const {
@@ -610,12 +658,116 @@ void Game::UpdateMission(float dt) {
 }
 
 void Game::AddCarDraw(const Car& c,bool controlled) {
-    XMFLOAT4 tint=controlled?XMFLOAT4(1.12f,1.12f,1.12f,1):XMFLOAT4(1,1,1,1);
-    auto chassis=Cube(c.x,0.31f,c.z,1.75f,0.48f,3.55f,c.texture,tint,true,false);
-    chassis.yaw=c.yaw;
-    frameWorld_.push_back(chassis);
-    auto top=GroundQuad(c.x,0.565f,c.z,2.10f,4.15f,c.yaw,c.texture,{1,1,1,1},false,true);
-    frameWorld_.push_back(top);
+    const XMFLOAT4 paint=CarPaint(c.texture,controlled);
+    const XMFLOAT4 darkPaint{paint.x*0.72f,paint.y*0.72f,paint.z*0.72f,1};
+    const XMFLOAT4 glass{0.055f,0.105f,0.14f,1};
+    const XMFLOAT4 tire{0.035f,0.038f,0.042f,1};
+    const XMFLOAT4 metal{0.18f,0.19f,0.20f,1};
+
+    auto addLocal=[&](MeshKind mesh,float lx,float ly,float lz,float sx,float sy,float sz,
+                      XMFLOAT4 tint,float pitch=0.0f,float roll=0.0f,float yawOff=0.0f,
+                      bool shadow=true,bool unlit=false) {
+        XMFLOAT3 p=LocalPoint(c.x,0.0f,c.z,c.yaw,lx,ly,lz);
+        frameWorld_.push_back(Part(mesh,p.x,p.y,p.z,sx,sy,sz,
+                                   c.yaw+yawOff,pitch,roll,18,tint,shadow,unlit));
+    };
+
+    // Fully volumetric vehicle: every visible body section exists as real geometry.
+    addLocal(MeshKind::Cube,0,0.38f,0,1.92f,0.46f,3.86f,darkPaint);
+    addLocal(MeshKind::Cube,0,0.64f,0,1.80f,0.30f,3.52f,paint);
+
+    // Sloped hood and trunk.
+    addLocal(MeshKind::Wedge,0,0.91f,1.28f,1.70f,0.58f,1.18f,paint);
+    addLocal(MeshKind::Wedge,0,0.86f,-1.39f,1.70f,0.48f,0.92f,paint,0,0,XM_PI);
+
+    // Cabin, roof and actual glass pieces.
+    addLocal(MeshKind::Cube,0,1.13f,-0.10f,1.48f,0.63f,1.56f,darkPaint);
+    addLocal(MeshKind::Cube,0,1.48f,-0.13f,1.24f,0.18f,1.08f,paint);
+    addLocal(MeshKind::Cube,0,1.18f,0.64f,1.29f,0.055f,0.70f,glass,-0.52f);
+    addLocal(MeshKind::Cube,0,1.17f,-0.86f,1.28f,0.055f,0.56f,glass,0.50f);
+
+    // Side windows.
+    addLocal(MeshKind::Cube,-0.755f,1.16f,-0.10f,0.045f,0.48f,1.28f,glass);
+    addLocal(MeshKind::Cube, 0.755f,1.16f,-0.10f,0.045f,0.48f,1.28f,glass);
+
+    // Four real cylindrical wheels. They also participate in the shadow pass.
+    for(float x : {-0.98f,0.98f}) {
+        for(float z : {-1.18f,1.18f}) {
+            addLocal(MeshKind::Cylinder,x,0.39f,z,0.57f,0.34f,0.57f,tire,0,XM_PIDIV2);
+            addLocal(MeshKind::Cylinder,x,0.39f,z,0.36f,0.36f,0.36f,metal,0,XM_PIDIV2);
+        }
+    }
+
+    // Bumpers and lights are geometry, not painted into a top-down sprite.
+    addLocal(MeshKind::Cube,0,0.51f,1.95f,1.55f,0.16f,0.11f,metal);
+    addLocal(MeshKind::Cube,0,0.50f,-1.95f,1.52f,0.15f,0.11f,metal);
+    for(float x : {-0.58f,0.58f}) {
+        addLocal(MeshKind::Cube,x,0.66f,1.96f,0.33f,0.20f,0.075f,{1.0f,0.88f,0.52f,1},0,0,0,false,true);
+        addLocal(MeshKind::Cube,x,0.64f,-1.96f,0.30f,0.18f,0.075f,{0.88f,0.05f,0.04f,1},0,0,0,false,true);
+    }
+
+    if(c.texture==12) {
+        addLocal(MeshKind::Cube,0,1.66f,-0.10f,0.56f,0.25f,0.34f,{0.95f,0.67f,0.06f,1},0,0,0,true,true);
+    }
+
+    if(c.police || c.texture==13) {
+        addLocal(MeshKind::Cube,-0.30f,1.68f,-0.12f,0.55f,0.15f,0.20f,{0.88f,0.04f,0.04f,1},0,0,0,false,true);
+        addLocal(MeshKind::Cube, 0.30f,1.68f,-0.12f,0.55f,0.15f,0.20f,{0.04f,0.18f,0.95f,1},0,0,0,false,true);
+    }
+}
+
+void Game::AddPedDraw(const Ped& p,bool playerCharacter) {
+    const bool dead=!playerCharacter && p.state==PedState::Dead;
+    const bool armed=playerCharacter || (!dead && (p.state==PedState::Aggressive || p.state==PedState::Police));
+    const XMFLOAT4 shirt=ShirtColor(p.texture,playerCharacter);
+    const XMFLOAT4 pants=(p.texture==9)?XMFLOAT4(0.035f,0.055f,0.10f,1):XMFLOAT4(0.08f,0.09f,0.11f,1);
+    const XMFLOAT4 skin=(p.personality%3u==0u)?XMFLOAT4(0.64f,0.39f,0.25f,1):
+                         ((p.personality%3u==1u)?XMFLOAT4(0.82f,0.59f,0.40f,1):XMFLOAT4(0.94f,0.75f,0.57f,1));
+    const XMFLOAT4 hair{0.07f,0.045f,0.03f,1};
+
+    if(dead) {
+        auto torso=Part(MeshKind::Cube,p.x,0.24f,p.z,0.62f,0.28f,1.00f,p.yaw,0,XM_PIDIV2,18,shirt,true,false);
+        frameWorld_.push_back(torso);
+        XMFLOAT3 hp=LocalPoint(p.x,0,p.z,p.yaw,0.0f,0.24f,0.72f);
+        frameWorld_.push_back(Part(MeshKind::Cylinder,hp.x,hp.y,hp.z,0.42f,0.32f,0.42f,p.yaw,0,XM_PIDIV2,18,skin,true,false));
+        XMFLOAT3 l1=LocalPoint(p.x,0,p.z,p.yaw,-0.25f,0.16f,-0.62f);
+        XMFLOAT3 l2=LocalPoint(p.x,0,p.z,p.yaw, 0.25f,0.16f,-0.62f);
+        frameWorld_.push_back(Part(MeshKind::Cube,l1.x,l1.y,l1.z,0.22f,0.22f,0.86f,p.yaw,0,0,18,pants,true,false));
+        frameWorld_.push_back(Part(MeshKind::Cube,l2.x,l2.y,l2.z,0.22f,0.22f,0.86f,p.yaw,0,0,18,pants,true,false));
+        return;
+    }
+
+    float speed=playerCharacter ? ((Key('W')||Key('A')||Key('S')||Key('D'))?2.4f:0.0f) : p.speed;
+    float phase=missionPulse_*8.5f + (playerCharacter?0.0f:float(p.personality)*0.37f);
+    float swing=std::sin(phase)*std::min(0.58f,speed*0.24f);
+
+    // Torso.
+    frameWorld_.push_back(Part(MeshKind::Cube,p.x,1.34f,p.z,0.66f,0.86f,0.43f,p.yaw,0,0,18,shirt,true,false));
+
+    // Head + hair are round 3D meshes.
+    frameWorld_.push_back(Part(MeshKind::Cylinder,p.x,2.06f,p.z,0.47f,0.50f,0.47f,p.yaw,0,0,18,skin,true,false));
+    frameWorld_.push_back(Part(MeshKind::Cylinder,p.x,2.32f,p.z,0.48f,0.10f,0.48f,p.yaw,0,0,18,hair,true,false));
+
+    // Legs animate in opposite phases.
+    for(int side=-1;side<=1;side+=2) {
+        float lx=float(side)*0.18f;
+        float lz=float(side)*swing*0.18f;
+        XMFLOAT3 lp=LocalPoint(p.x,0,p.z,p.yaw,lx,0.63f,lz);
+        frameWorld_.push_back(Part(MeshKind::Cube,lp.x,lp.y,lp.z,0.23f,0.76f,0.25f,p.yaw,float(side)*swing,0,18,pants,true,false));
+    }
+
+    // Arms also move as actual geometry.
+    for(int side=-1;side<=1;side+=2) {
+        float lx=float(side)*0.47f;
+        float lz=-float(side)*swing*0.10f;
+        XMFLOAT3 ap=LocalPoint(p.x,0,p.z,p.yaw,lx,1.39f,lz);
+        frameWorld_.push_back(Part(MeshKind::Cube,ap.x,ap.y,ap.z,0.18f,0.70f,0.18f,p.yaw,-float(side)*swing*0.8f,0,18,skin,true,false));
+    }
+
+    if(armed) {
+        XMFLOAT3 gp=LocalPoint(p.x,0,p.z,p.yaw,0.23f,1.42f,0.52f);
+        frameWorld_.push_back(Part(MeshKind::Cube,gp.x,gp.y,gp.z,0.12f,0.14f,0.78f,p.yaw,0,0,18,{0.055f,0.06f,0.065f,1},true,false));
+    }
 }
 
 void Game::AddHudBar(float x,float y,float w,float h,float value,const XMFLOAT4& color) {
@@ -661,16 +813,19 @@ void Game::BuildFrame() {
     for(int i=0;i<int(cars_.size());++i)
         if(cars_[i].active) AddCarDraw(cars_[i],i==player_.car);
 
-    for(const auto& p:peds_) {
-        if(p.state==PedState::Dead) {
-            frameWorld_.push_back(GroundQuad(p.x,0.19f,p.z,0.72f,1.35f,p.yaw,p.texture,{0.42f,0.42f,0.42f,0.85f},false,true));
-        } else {
-            frameWorld_.push_back(GroundQuad(p.x,0.20f,p.z,0.82f,1.45f,p.yaw,p.texture,{1,1,1,1},false,true));
-        }
-    }
+    for(const auto& p:peds_)
+        AddPedDraw(p,false);
 
-    if(player_.car<0)
-        frameWorld_.push_back(GroundQuad(player_.x,0.22f,player_.z,0.90f,1.55f,player_.yaw,6,{1,1,1,1},false,true));
+    if(player_.car<0) {
+        Ped visualPlayer;
+        visualPlayer.x=player_.x;
+        visualPlayer.z=player_.z;
+        visualPlayer.yaw=player_.yaw;
+        visualPlayer.speed=(Key('W')||Key('A')||Key('S')||Key('D'))?2.4f:0.0f;
+        visualPlayer.texture=6;
+        visualPlayer.personality=2;
+        AddPedDraw(visualPlayer,true);
+    }
 
     for(const auto& b:bullets_)
         frameWorld_.push_back(GroundQuad(b.x,0.30f,b.z,0.22f,0.46f,0,17,{1.2f,0.95f,0.42f,1},false,true));
@@ -696,19 +851,24 @@ void Game::BuildFrame() {
         tz=cars_[player_.car].z;
     }
 
-    // Near-overhead orthographic camera: player/car remains exactly at the center.
-    XMVECTOR eye=XMVectorSet(tx,46.0f,tz+7.5f,1);
-    XMVECTOR at=XMVectorSet(tx,0.0f,tz,1);
-    XMMATRIX view=XMMatrixLookAtLH(eye,at,XMVectorSet(0,0,-1,0));
+    // True 3D GTA-style top-down camera. Perspective is intentionally subtle:
+    // the controlled actor stays centered, but cars, people and buildings expose real volume.
+    float camHeight=cameraSize_;
+    XMVECTOR eye=XMVectorSet(tx,camHeight,tz+camHeight*0.31f,1);
+    XMVECTOR at=XMVectorSet(tx,1.05f,tz,1);
+    XMMATRIX view=XMMatrixLookAtLH(eye,at,XMVectorSet(0,1,0,0));
     float aspect=float(Renderer::Width)/float(Renderer::Height);
-    XMMATRIX proj=XMMatrixOrthographicLH(cameraSize_*aspect,cameraSize_,0.1f,180.0f);
+    XMMATRIX proj=XMMatrixPerspectiveFovLH(XMConvertToRadians(47.0f),aspect,0.12f,220.0f);
     XMMATRIX viewProj=view*proj;
 
+    // The 4K shadow map is rendered from the sun using the same real 3D geometry
+    // that appears in the color pass.  The tight light frustum gives dense texels
+    // around the player and avoids the fake blob-shadow look.
     XMVECTOR lightDir=XMVector3Normalize(XMVectorSet(-0.55f,-0.80f,-0.25f,0));
-    XMVECTOR lightTarget=XMVectorSet(tx,0,tz,1);
-    XMVECTOR lightPos=XMVectorSubtract(lightTarget,XMVectorScale(lightDir,90.0f));
+    XMVECTOR lightTarget=XMVectorSet(tx,0.8f,tz,1);
+    XMVECTOR lightPos=XMVectorSubtract(lightTarget,XMVectorScale(lightDir,86.0f));
     XMMATRIX lightView=XMMatrixLookAtLH(lightPos,lightTarget,XMVectorSet(0,1,0,0));
-    XMMATRIX lightProj=XMMatrixOrthographicLH(92.0f,92.0f,1.0f,220.0f);
+    XMMATRIX lightProj=XMMatrixOrthographicLH(66.0f,66.0f,1.0f,190.0f);
 
     renderer_.Render(frameWorld_,hud_,viewProj,lightView*lightProj);
 }
