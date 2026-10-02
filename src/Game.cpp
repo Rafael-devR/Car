@@ -611,7 +611,9 @@ void Game::UpdateMission(float dt) {
 
 void Game::AddCarDraw(const Car& c,bool controlled) {
     XMFLOAT4 tint=controlled?XMFLOAT4(1.12f,1.12f,1.12f,1):XMFLOAT4(1,1,1,1);
-    frameWorld_.push_back(Cube(c.x,0.31f,c.z,1.75f,0.48f,3.55f,c.texture,tint,true,false));
+    auto chassis=Cube(c.x,0.31f,c.z,1.75f,0.48f,3.55f,c.texture,tint,true,false);
+    chassis.yaw=c.yaw;
+    frameWorld_.push_back(chassis);
     auto top=GroundQuad(c.x,0.565f,c.z,2.10f,4.15f,c.yaw,c.texture,{1,1,1,1},false,true);
     frameWorld_.push_back(top);
 }
