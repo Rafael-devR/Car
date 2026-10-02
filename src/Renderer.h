@@ -49,7 +49,7 @@ private:
     };
 
     static constexpr UINT FrameCount = 2;
-    static constexpr UINT ShadowSize = 2048;
+    static constexpr UINT ShadowSize = 4096;
     static constexpr UINT MaxDraws = 4096;
     static constexpr UINT TextureCount = 27;
     static constexpr UINT ShadowSrvIndex = 31;
@@ -91,6 +91,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D12PipelineState> hudPso_;
 
     Mesh cube_;
+    Mesh cylinder_;
+    Mesh wedge_;
     Mesh quadXZ_;
     Mesh quadXY_;
 

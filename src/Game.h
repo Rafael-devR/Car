@@ -83,6 +83,7 @@ private:
 
     void BuildFrame();
     void AddCarDraw(const Car& car, bool playerControlled);
+    void AddPedDraw(const Ped& ped, bool playerCharacter);
     void AddHudBar(float x, float y, float w, float h, float value,
                    const DirectX::XMFLOAT4& color);
     void AddDigit(int digit, float x, float y, float size, const DirectX::XMFLOAT4& color);
@@ -100,7 +101,7 @@ private:
     std::vector<Ped> peds_;
     std::vector<Bullet> bullets_;
 
-    float cameraSize_ = 32.0f;
+    float cameraSize_ = 36.0f;
     bool ePrev_ = false;
     bool firePrev_ = false;
     std::uint32_t rng_ = 0x51A7C0DEu;

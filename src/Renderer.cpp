@@ -99,13 +99,26 @@ VSOut VSMain(VSIn input)
     return o;
 }
 
-float Visibility(float4 sp)
+float Visibility(float4 sp, float3 n)
 {
     float3 p = sp.xyz / max(sp.w, 0.00001);
     float2 uv = p.xy * float2(0.5, -0.5) + 0.5;
     if (uv.x <= 0 || uv.x >= 1 || uv.y <= 0 || uv.y >= 1 || p.z <= 0 || p.z >= 1)
         return 1.0;
-    return ShadowMap.SampleCmpLevelZero(ShadowSampler, uv, p.z - 0.0013);
+
+    float3 L = -normalize(LightDirAmbient.xyz);
+    float bias = max(0.00028, 0.00145 * (1.0 - saturate(dot(n, L))));
+    const float2 texel = float2(1.0 / 4096.0, 1.0 / 4096.0);
+
+    float sum = 0.0;
+    [unroll]
+    for (int y = -2; y <= 2; ++y) {
+        [unroll]
+        for (int x = -2; x <= 2; ++x) {
+            sum += ShadowMap.SampleCmpLevelZero(ShadowSampler, uv + float2(x, y) * texel, p.z - bias);
+        }
+    }
+    return sum / 25.0;
 }
 
 float4 PSMain(VSOut input) : SV_TARGET
@@ -117,11 +130,17 @@ float4 PSMain(VSOut input) : SV_TARGET
         return tex;
 
     float3 n = normalize(input.normal);
-    float ndl = saturate(dot(n, -normalize(LightDirAmbient.xyz)));
-    float vis = Visibility(input.shadowPos);
-    float light = LightDirAmbient.w + ndl * vis * 0.72;
-    float3 c = tex.rgb * light;
-    c += tex.rgb * 0.10;
+    float3 L = -normalize(LightDirAmbient.xyz);
+    float ndl = saturate(dot(n, L));
+    float vis = Visibility(input.shadowPos, n);
+
+    float ambient = LightDirAmbient.w;
+    float diffuse = ambient + ndl * vis * (1.0 - ambient);
+    float3 V = normalize(float3(0.0, 1.0, -0.28));
+    float3 H = normalize(L + V);
+    float spec = pow(saturate(dot(n, H)), 28.0) * 0.14 * vis;
+
+    float3 c = tex.rgb * diffuse + spec;
     c = saturate(c);
     return float4(c, tex.a);
 }
@@ -437,6 +456,86 @@ void Renderer::CreateMeshes() {
     }
     cube_ = UploadMesh(cube, ci);
 
+    // 16-sided cylinder. The local axis is Y; rotations turn it into wheels,
+    // heads, bollards and other rounded 3D pieces.
+    {
+        constexpr int segments = 16;
+        std::vector<Vertex> v;
+        std::vector<std::uint16_t> idx;
+
+        for (int s = 0; s <= segments; ++s) {
+            float a = XM_2PI * float(s) / float(segments);
+            float cs = std::cos(a);
+            float sn = std::sin(a);
+            float u = float(s) / float(segments);
+            v.push_back({{cs*0.5f,-0.5f,sn*0.5f},{cs,0,sn},{u,1}});
+            v.push_back({{cs*0.5f, 0.5f,sn*0.5f},{cs,0,sn},{u,0}});
+        }
+        for (int s = 0; s < segments; ++s) {
+            std::uint16_t b = std::uint16_t(s*2);
+            idx.insert(idx.end(),{b,std::uint16_t(b+1),std::uint16_t(b+3),b,std::uint16_t(b+3),std::uint16_t(b+2)});
+        }
+
+        std::uint16_t topCenter = std::uint16_t(v.size());
+        v.push_back({{0,0.5f,0},{0,1,0},{0.5f,0.5f}});
+        std::uint16_t topStart = std::uint16_t(v.size());
+        for (int s=0;s<segments;++s) {
+            float a=XM_2PI*float(s)/float(segments);
+            float cs=std::cos(a), sn=std::sin(a);
+            v.push_back({{cs*0.5f,0.5f,sn*0.5f},{0,1,0},{cs*0.5f+0.5f,0.5f-sn*0.5f}});
+        }
+        for(int s=0;s<segments;++s) {
+            std::uint16_t a=std::uint16_t(topStart+s);
+            std::uint16_t b=std::uint16_t(topStart+(s+1)%segments);
+            idx.insert(idx.end(),{topCenter,a,b});
+        }
+
+        std::uint16_t botCenter = std::uint16_t(v.size());
+        v.push_back({{0,-0.5f,0},{0,-1,0},{0.5f,0.5f}});
+        std::uint16_t botStart = std::uint16_t(v.size());
+        for (int s=0;s<segments;++s) {
+            float a=XM_2PI*float(s)/float(segments);
+            float cs=std::cos(a), sn=std::sin(a);
+            v.push_back({{cs*0.5f,-0.5f,sn*0.5f},{0,-1,0},{cs*0.5f+0.5f,0.5f+sn*0.5f}});
+        }
+        for(int s=0;s<segments;++s) {
+            std::uint16_t a=std::uint16_t(botStart+s);
+            std::uint16_t b=std::uint16_t(botStart+(s+1)%segments);
+            idx.insert(idx.end(),{botCenter,b,a});
+        }
+        cylinder_ = UploadMesh(v,idx);
+    }
+
+    // Sloped prism used for real 3D hoods and trunks.
+    {
+        const XMFLOAT3 nTop{0.0f,0.9284767f,0.3713907f};
+        const std::vector<Vertex> v = {
+            {{-0.5f,-0.5f,-0.5f},{0,0,-1},{0,1}}, {{0.5f,-0.5f,-0.5f},{0,0,-1},{1,1}},
+            {{0.5f,0.5f,-0.5f},{0,0,-1},{1,0}}, {{-0.5f,0.5f,-0.5f},{0,0,-1},{0,0}},
+
+            {{-0.5f,-0.5f,0.5f},{0,0,1},{0,1}}, {{-0.5f,0.10f,0.5f},{0,0,1},{0,0}},
+            {{0.5f,0.10f,0.5f},{0,0,1},{1,0}}, {{0.5f,-0.5f,0.5f},{0,0,1},{1,1}},
+
+            {{-0.5f,-0.5f,-0.5f},{-1,0,0},{0,1}}, {{-0.5f,0.5f,-0.5f},{-1,0,0},{0,0}},
+            {{-0.5f,0.10f,0.5f},{-1,0,0},{1,0}}, {{-0.5f,-0.5f,0.5f},{-1,0,0},{1,1}},
+
+            {{0.5f,-0.5f,0.5f},{1,0,0},{0,1}}, {{0.5f,0.10f,0.5f},{1,0,0},{0,0}},
+            {{0.5f,0.5f,-0.5f},{1,0,0},{1,0}}, {{0.5f,-0.5f,-0.5f},{1,0,0},{1,1}},
+
+            {{-0.5f,0.5f,-0.5f},nTop,{0,1}}, {{0.5f,0.5f,-0.5f},nTop,{1,1}},
+            {{0.5f,0.10f,0.5f},nTop,{1,0}}, {{-0.5f,0.10f,0.5f},nTop,{0,0}},
+
+            {{-0.5f,-0.5f,0.5f},{0,-1,0},{0,1}}, {{0.5f,-0.5f,0.5f},{0,-1,0},{1,1}},
+            {{0.5f,-0.5f,-0.5f},{0,-1,0},{1,0}}, {{-0.5f,-0.5f,-0.5f},{0,-1,0},{0,0}}
+        };
+        std::vector<std::uint16_t> idx;
+        for(std::uint16_t face=0;face<6;++face) {
+            std::uint16_t b=face*4;
+            idx.insert(idx.end(),{b,std::uint16_t(b+1),std::uint16_t(b+2),b,std::uint16_t(b+2),std::uint16_t(b+3)});
+        }
+        wedge_ = UploadMesh(v,idx);
+    }
+
     const std::vector<Vertex> xz = {
         {{-0.5f,0,-0.5f},{0,1,0},{0,1}}, {{0.5f,0,-0.5f},{0,1,0},{1,1}},
         {{0.5f,0,0.5f},{0,1,0},{1,0}}, {{-0.5f,0,0.5f},{0,1,0},{0,0}}
@@ -717,7 +816,9 @@ void Renderer::Render(
             worldM=XMMatrixScaling(d.scale.x,d.scale.y,1.0f)*XMMatrixTranslation(d.pos.x,d.pos.y,0.0f);
             vp=XMMatrixIdentity();
         } else {
-            worldM=XMMatrixScaling(d.scale.x,d.scale.y,d.scale.z)*XMMatrixRotationY(d.yaw)*XMMatrixTranslation(d.pos.x,d.pos.y,d.pos.z);
+            worldM=XMMatrixScaling(d.scale.x,d.scale.y,d.scale.z)*
+                   XMMatrixRotationRollPitchYaw(d.pitch,d.yaw,d.roll)*
+                   XMMatrixTranslation(d.pos.x,d.pos.y,d.pos.z);
             vp=viewProj;
         }
         ObjectCB cb{};
@@ -725,7 +826,7 @@ void Renderer::Render(
         XMStoreFloat4x4(&cb.viewProj,XMMatrixTranspose(vp));
         XMStoreFloat4x4(&cb.lightViewProj,XMMatrixTranspose(lightViewProj));
         cb.tint=d.tint;
-        cb.lightDirAmbient=XMFLOAT4(-0.52f,-0.81f,-0.27f,0.58f);
+        cb.lightDirAmbient=XMFLOAT4(-0.52f,-0.81f,-0.27f,0.42f);
         cb.params=XMFLOAT4((d.unlit||screen)?1.0f:0.0f,0,0,0);
         std::memcpy(cbMapped_+frameBase+UINT64(index)*cbStride,&cb,sizeof(cb));
     };
@@ -814,6 +915,8 @@ D3D12_GPU_DESCRIPTOR_HANDLE Renderer::GpuSrv(UINT i) const {
     return h;
 }
 Renderer::Mesh& Renderer::CurrentMesh(MeshKind k) {
+    if(k==MeshKind::Cylinder) return cylinder_;
+    if(k==MeshKind::Wedge) return wedge_;
     if(k==MeshKind::QuadXZ) return quadXZ_;
     if(k==MeshKind::QuadXY) return quadXY_;
     return cube_;
